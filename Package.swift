@@ -9,6 +9,7 @@ let package = Package(
         .library(name: "USHRDevice", targets: ["USHRDevice"]),
         .library(name: "USHRPanelCore", targets: ["USHRPanelCore"]),
         .executable(name: "ushr-probe", targets: ["ushr-probe"]),
+        .executable(name: "USHRSettingsPanel", targets: ["USHRSettingsPanel"]),
     ],
     targets: [
         .target(name: "USHRProtocol"),
@@ -20,6 +21,10 @@ let package = Package(
         ),
         .target(name: "USHRPanelCore", dependencies: ["USHRProtocol"]),
         .executableTarget(name: "ushr-probe", dependencies: ["USHRProtocol", "USHRDevice"]),
+        .executableTarget(
+            name: "USHRSettingsPanel",
+            dependencies: ["USHRProtocol", "USHRDevice", "USHRPanelCore"]
+        ),
         .testTarget(name: "USHRDeviceTests", dependencies: ["USHRDevice", "USHRProtocol"]),
         .testTarget(name: "USHRPanelCoreTests", dependencies: ["USHRPanelCore", "USHRProtocol"]),
         .testTarget(name: "USHRProtocolTests", dependencies: ["USHRProtocol"]),

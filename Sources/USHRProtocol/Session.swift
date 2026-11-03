@@ -48,9 +48,37 @@ public actor USHRSession: USHRControlling {
         if duration != .zero { try await Task.sleep(for: duration) }
     }
 
+    // FIFO single-flight lock: public operations hold it across suspension points so
+    // actor reentrancy cannot interleave their transport traffic.
+    private var locked = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    private func acquire() async {
+        if !locked {
+            locked = true
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    private func release() {
+        if waiters.isEmpty {
+            locked = false
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
+
     /// Polls until no `0xA1 == 0` record is present in a reply.
     public func waitReady() async throws {
+        await acquire()
+        defer { release() }
+        try await pollReady()
+    }
+
+    private func pollReady() async throws {
         for attempt in 0..<timing.readyAttempts {
+            try Task.checkCancellation()
             do {
                 let bytes = try transport.controlIn(maxLength: TLV.maxMessageLength)
                 // A malformed reply carries no busy marker we can trust; treat as not ready.
@@ -65,15 +93,15 @@ public actor USHRSession: USHRControlling {
         throw SessionError.deviceBusy
     }
 
-    private func encodedLength(_ records: [TLVRecord]) -> Int {
+    private static func encodedLength(_ records: [TLVRecord]) -> Int {
         do { return try TLV.encode(records).count } catch TLVError.messageTooLong(let n) { return n } catch { return Int.max }
     }
 
-    public func send(_ commands: [Command]) async throws {
+    /// Greedily packs whole record groups into messages of at most 64 bytes.
+    static func pack(_ groups: [[TLVRecord]]) throws -> [[UInt8]] {
         var current: [TLVRecord] = []
         var messages: [[UInt8]] = []
-        for command in commands {
-            let records = command.records
+        for records in groups {
             if !current.isEmpty, encodedLength(current + records) > TLV.maxMessageLength {
                 messages.append(try TLV.encode(current))
                 current = []
@@ -81,9 +109,19 @@ public actor USHRSession: USHRControlling {
             current += records
         }
         if !current.isEmpty { messages.append(try TLV.encode(current)) }
+        return messages
+    }
 
+    public func send(_ commands: [Command]) async throws {
+        await acquire()
+        defer { release() }
+        try await sendLocked(commands)
+    }
+
+    private func sendLocked(_ commands: [Command]) async throws {
+        let messages = try Self.pack(commands.map(\.records))
         for message in messages {
-            try await waitReady()
+            try await pollReady()
             try await write(message)
         }
     }
@@ -103,11 +141,14 @@ public actor USHRSession: USHRControlling {
     }
 
     public func query(_ commands: [Command]) async throws -> DeviceReport {
-        try await send(commands)
+        await acquire()
+        defer { release() }
+        try await sendLocked(commands)
         if commands.contains(.getAssign) { try await pause(timing.assignReadDelay) }
 
         var report = DeviceReport()
         for _ in 0..<timing.replyAttempts {
+            try Task.checkCancellation()
             let bytes = try transport.controlIn(maxLength: TLV.maxMessageLength)
             if let records = try? TLV.decode(bytes) {
                 report.merge(DeviceReport.parse(records))

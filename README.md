@@ -1,6 +1,5 @@
 # US-1x2HR-Settings-Panel-macOS
 
-
 Native Apple Silicon (arm64, macOS 14+) replacement for TASCAM's US-HR Settings Panel.
 
 ## Build and run

@@ -4,6 +4,7 @@ import USHRProtocol
 
 struct PanelView: View {
     let model: PanelModel
+    let coordinator: DeviceCoordinator
 
     private var isConnected: Bool { model.connection == .connected }
 
@@ -12,6 +13,9 @@ struct PanelView: View {
             header
             if case .error(let message) = model.connection {
                 banner("Device error: \(message)", systemImage: "exclamationmark.octagon.fill", color: .red)
+            }
+            if model.connection == .noDevice, let message = coordinator.deviceMessage {
+                banner(message, systemImage: "exclamationmark.triangle.fill", color: .orange)
             }
             if let message = model.lastError {
                 banner(message, systemImage: "exclamationmark.triangle.fill", color: .orange)

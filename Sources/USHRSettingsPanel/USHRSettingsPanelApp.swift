@@ -26,7 +26,7 @@ struct USHRSettingsPanelApp: App {
 
     var body: some Scene {
         Window("US\u{2011}HR Settings Panel", id: "panel") {
-            PanelView(model: delegate.model)
+            PanelView(model: delegate.model, coordinator: delegate.coordinator)
         }
         .windowResizability(.contentSize)
     }

@@ -32,15 +32,18 @@ public final class DeviceMonitor: @unchecked Sendable {
 
     private let onAttach: @Sendable (AttachedDevice) -> Void
     private let onDetach: @Sendable (UInt64) -> Void
+    private let onError: @Sendable (String) -> Void
     private let lock = NSLock()
     private var port: IONotificationPortRef?
     private var matchIterators: [io_iterator_t] = []
     private var watches: [UInt64: Watch] = [:]
 
     public init(onAttach: @escaping @Sendable (AttachedDevice) -> Void,
-                onDetach: @escaping @Sendable (UInt64) -> Void) {
+                onDetach: @escaping @Sendable (UInt64) -> Void,
+                onError: @escaping @Sendable (String) -> Void = { _ in }) {
         self.onAttach = onAttach
         self.onDetach = onDetach
+        self.onError = onError
     }
 
     deinit { stop() }
@@ -102,9 +105,22 @@ public final class DeviceMonitor: @unchecked Sendable {
 
     private func attach(_ service: io_service_t) {
         var rid: UInt64 = 0
-        guard IORegistryEntryGetRegistryEntryID(service, &rid) == 0 else { return }
-        guard let pid = Self.intProperty(service, "idProduct") else { return }
-        guard let transport = try? IOKitTransport(service: service) else { return }
+        let ridKR = IORegistryEntryGetRegistryEntryID(service, &rid)
+        guard ridKR == 0 else {
+            onError("Could not read registry entry ID of a matched device: \(Self.hex(ridKR))")
+            return
+        }
+        guard let pid = Self.intProperty(service, "idProduct") else {
+            onError("Matched device \(rid) has no idProduct property")
+            return
+        }
+        let transport: IOKitTransport
+        do {
+            transport = try IOKitTransport(service: service)
+        } catch {
+            onError("Could not create USB device interface for device \(rid): \(Self.describe(error))")
+            return
+        }
 
         lock.lock()
         guard let p = port, watches[rid] == nil else { lock.unlock(); return }
@@ -121,6 +137,10 @@ public final class DeviceMonitor: @unchecked Sendable {
             ctx.release()
         }
         lock.unlock()
+        guard kr == 0 else {
+            onError("Could not register removal notification for device \(rid): \(Self.hex(kr))")
+            return  // transport is released on scope exit; device is not reported as attached
+        }
 
         let name = Self.stringProperty(service, ["USB Product Name", "kUSBProductString"])
         let serial = Self.stringProperty(service, ["USB Serial Number", "kUSBSerialNumberString"])
@@ -136,6 +156,18 @@ public final class DeviceMonitor: @unchecked Sendable {
         if let w {
             IOObjectRelease(w.notification)
             w.context.release()
+        }
+    }
+
+    private static func hex(_ kr: Int32) -> String {
+        "kern_return 0x" + String(UInt32(bitPattern: kr), radix: 16, uppercase: true)
+    }
+
+    private static func describe(_ error: Error) -> String {
+        switch error {
+        case TransportError.io(let kr): return hex(kr)
+        case let t as TransportError: return "\(t)"
+        default: return "\(error)"
         }
     }
 

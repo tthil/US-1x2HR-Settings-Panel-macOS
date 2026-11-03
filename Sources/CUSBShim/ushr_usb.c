@@ -12,7 +12,7 @@
 #define USHR_TIMEOUT_MS 1000
 
 struct ushr_dev {
-    IOUSBDeviceInterface **intf;
+    IOUSBDeviceInterface942 **intf;
 };
 
 ushr_dev *ushr_dev_create(io_service_t service, kern_return_t *err)
@@ -26,8 +26,8 @@ ushr_dev *ushr_dev_create(io_service_t service, kern_return_t *err)
         return NULL;
     }
 
-    IOUSBDeviceInterface **intf = NULL;
-    HRESULT hr = (*plug)->QueryInterface(plug, CFUUIDGetUUIDBytes(kIOUSBDeviceInterfaceID), (LPVOID *)&intf);
+    IOUSBDeviceInterface942 **intf = NULL;
+    HRESULT hr = (*plug)->QueryInterface(plug, CFUUIDGetUUIDBytes(kIOUSBDeviceInterfaceID942), (LPVOID *)&intf);
     IODestroyPlugInInterface(plug);
     if (hr != S_OK || intf == NULL) {
         if (err) *err = kIOReturnUnsupported;

@@ -57,6 +57,7 @@ public struct DeviceReport: Equatable, Sendable {
             case (0x36, .bytes(let b)): report.buildTime = text(b)
             case (0x37, .bytes(let b)): report.productSignature = text(b)
             case (0xA1, .u8(let v)): if v == 0 { report.busy = true }
+            case (0xA1, .u16(let v)): if v == 0 { report.busy = true }  // real devices send u16
             case (0x41, _): pendingSource = current()
             case (0x42, _): pendingDestination = current()
             case (0x43, _):

@@ -62,17 +62,19 @@ public enum PanelCommands {
         [.setAutoPowerSave(on)]
     }
 
+    /// Query groups for a full state read. The hardware answers only the last get of a
+    /// multi-get message (observed), so each channel get is its own group.
     public static func readAll(for model: USHRModel) -> [[Command]] {
-        [
+        var groups: [[Command]] = [
             [.getInfo],
             [.getSampleRate, .getAutoPowerSave],
-            [.getStereo(Channel(.directMonitorOut, 1)),
-             .getStereo(Channel(.analogIn, 1)),
-             .getStereo(Channel(.computerOut, 1))],
-            (1...UInt8(inputCount(for: model))).map { .getMute(Channel(.analogIn, $0)) },
-            [.getFader(Channel(.directMonitorOut, 1))],
-            [.getAssign],
+            [.getStereo(Channel(.directMonitorOut, 1))],
+            [.getStereo(Channel(.analogIn, 1))],
+            [.getStereo(Channel(.computerOut, 1))],
         ]
+        groups += (1...UInt8(inputCount(for: model))).map { [.getMute(Channel(.analogIn, $0))] }
+        groups += [[.getFader(Channel(.directMonitorOut, 1))], [.getAssign]]
+        return groups
     }
 
     public static func inputCount(for model: USHRModel) -> Int {

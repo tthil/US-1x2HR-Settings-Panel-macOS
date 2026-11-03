@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "USHRProtocol", targets: ["USHRProtocol"]),
         .library(name: "USHRDevice", targets: ["USHRDevice"]),
+        .executable(name: "ushr-probe", targets: ["ushr-probe"]),
     ],
     targets: [
         .target(name: "USHRProtocol"),
@@ -16,6 +17,7 @@ let package = Package(
             dependencies: ["USHRProtocol", "CUSBShim"],
             linkerSettings: [.linkedFramework("IOKit"), .linkedFramework("CoreFoundation")]
         ),
+        .executableTarget(name: "ushr-probe", dependencies: ["USHRProtocol", "USHRDevice"]),
         .testTarget(name: "USHRDeviceTests", dependencies: ["USHRDevice", "USHRProtocol"]),
         .testTarget(name: "USHRProtocolTests", dependencies: ["USHRProtocol"]),
     ]

@@ -78,4 +78,42 @@ final class DeviceReportTests: XCTestCase {
         XCTAssertEqual(USHRModel.unknown(0x1234).displayName, "Unknown US-HR (0x1234)")
         XCTAssertEqual(USHRModel.vendorID, 0x0644)
     }
+
+    // MARK: - Captured from a real US-1x2HR (fw 0x64 build 14)
+
+    private func decode(_ hex: String) throws -> [TLVRecord] {
+        try TLV.decode(hex.split(separator: " ").map { UInt8($0, radix: 16)! })
+    }
+
+    func test_parse_realReadyMarkerIsU16() throws {
+        // Idle reply: A1 is a u16 (type 3) with value 1 = ready.
+        XCTAssertFalse(DeviceReport.parse(try decode("A1 03 01 00 00 00")).busy)
+        XCTAssertTrue(DeviceReport.parse(try decode("A1 03 00 00 00 00")).busy)
+    }
+
+    func test_parse_realInfoReply() throws {
+        let r = DeviceReport.parse(try decode(
+            "A1 03 01 00 32 03 64 00 33 03 0E 00 34 05 08 55 53 2D 31 78 32 48 52 00 00"))
+        XCTAssertEqual(r.version, 0x64)
+        XCTAssertEqual(r.build, 14)
+        XCTAssertEqual(r.productName, "US-1x2HR")
+    }
+
+    func test_parse_realMuteAndFaderReplies() throws {
+        let m = DeviceReport.parse(try decode(
+            "A1 03 01 00 61 02 04 62 02 01 C3 02 00 61 02 04 62 02 02 C3 02 00 00 00"))
+        XCTAssertEqual(m.mutes[Channel(.analogIn, 2)], false)
+        let f = DeviceReport.parse(try decode(
+            "A1 03 01 00 61 02 05 62 02 01 C1 02 00 61 02 06 62 02 00 C1 02 00 61 02 06 62 02 01 C1 02 7F 00 00"))
+        XCTAssertEqual(f.faders[Channel(.loopback, 1)], 127)
+        XCTAssertEqual(f.faders[Channel(.directMonitorOut, 1)], 0)
+    }
+
+    func test_parse_realAssignReply() throws {
+        let r = DeviceReport.parse(try decode(
+            "A1 03 01 00 61 02 05 62 02 01 41 01 61 02 01 62 02 01 42 01 43 01 "
+            + "61 02 05 62 02 02 41 01 61 02 01 62 02 02 42 01 43 01"))
+        XCTAssertEqual(r.assignments[Channel(.lineOut, 1)], Channel(.directMonitorOut, 1))
+        XCTAssertEqual(r.assignments[Channel(.lineOut, 2)], Channel(.directMonitorOut, 2))
+    }
 }

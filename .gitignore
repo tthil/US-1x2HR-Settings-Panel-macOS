@@ -1,0 +1,6 @@
+.build/
+build/
+.DS_Store
+/US-HR_SettingsPanel.app/
+/*.dmg
+/*.zip

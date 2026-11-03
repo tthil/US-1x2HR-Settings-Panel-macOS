@@ -12,6 +12,8 @@ final class FakeDevice: USHRControlling, @unchecked Sendable {
     private var _gate: CheckedContinuation<Void, Never>?
     private var _gateArmed = false
     private var _gateEntered = false
+    private var _finished = 0
+    private var _queryError: Error?
 
     var sent: [[Command]] { lock.withLock { _sent } }
     var queries: [[Command]] { lock.withLock { _queries } }
@@ -22,6 +24,11 @@ final class FakeDevice: USHRControlling, @unchecked Sendable {
     var sendError: Error? {
         get { lock.withLock { _sendError } }
         set { lock.withLock { _sendError = newValue } }
+    }
+    var finishedSends: Int { lock.withLock { _finished } }
+    var queryError: Error? {
+        get { lock.withLock { _queryError } }
+        set { lock.withLock { _queryError = newValue } }
     }
     var gateEntered: Bool { lock.withLock { _gateEntered } }
     func armGate() { lock.withLock { _gateArmed = true } }
@@ -41,11 +48,13 @@ final class FakeDevice: USHRControlling, @unchecked Sendable {
                 lock.withLock { _gate = c; _gateEntered = true }
             }
         }
+        defer { lock.withLock { _finished += 1 } }
         if let e = sendError { throw e }
     }
 
     func query(_ commands: [Command]) async throws -> DeviceReport {
         lock.withLock { _queries.append(commands) }
+        if let e = queryError { throw e }
         return report
     }
 }
@@ -142,7 +151,7 @@ func baseReport() -> DeviceReport {
         #expect(d.sent.count <= 2)
     }
 
-    @Test func sendError_setsErrorAndRereads() async {
+    @Test func sendError_setsLastErrorRereadsAndRecovers() async {
         let d = FakeDevice(); d.report = baseReport()
         let m = make(d)
         await m.attach(device: d, model: .us1x2HR, key: "k")
@@ -150,9 +159,27 @@ func baseReport() -> DeviceReport {
         d.sendError = SessionError.deviceBusy
         m.setAutoPowerSave(false)
         await m.waitUntilIdle()
-        if case .error = m.connection {} else { Issue.record("expected error, got \(m.connection)") }
+        #expect(m.connection == .connected)
+        #expect(m.lastError != nil)
         #expect(d.queries.count > before)
         #expect(m.autoPowerSave == true)  // re-read restored device truth
+        d.sendError = nil
+        m.setAutoPowerSave(false)
+        await m.waitUntilIdle()
+        #expect(m.lastError == nil)
+        #expect(m.connection == .connected)
+    }
+
+    @Test func rereadFailureAfterSendError_setsConnectionError() async {
+        let d = FakeDevice(); d.report = baseReport()
+        let m = make(d)
+        await m.attach(device: d, model: .us1x2HR, key: "k")
+        d.sendError = SessionError.deviceBusy
+        d.queryError = SessionError.noReply
+        m.setAutoPowerSave(false)
+        await m.waitUntilIdle()
+        #expect(m.lastError != nil)
+        if case .error = m.connection {} else { Issue.record("expected error, got \(m.connection)") }
     }
 
     @Test func detachDuringPendingSend_endsNoDevice() async {
@@ -166,12 +193,39 @@ func baseReport() -> DeviceReport {
         while !d.gateEntered { await Task.yield() }
         m.detach()
         d.openGate()
-        await m.waitUntilIdle()
+        // Wait for the suspended send to actually finish (throw), then let the model's catch run.
+        while d.finishedSends < 1 { await Task.yield() }
+        for _ in 0..<50 { await Task.yield() }
         #expect(m.connection == .noDevice)
+        #expect(m.lastError == nil)
         #expect(m.model == nil)
         #expect(m.audioInputs.isEmpty)
         #expect(m.firmware == nil)
+        #expect(m.autoPowerSave == false)
         #expect(d.sent.count == 1)
+        let q = d.queries.count
+        for _ in 0..<20 { await Task.yield() }
+        #expect(d.queries.count == q)
+    }
+
+    @Test func lateFailureFromOldDevice_doesNotTouchNewAttach() async {
+        let old = FakeDevice(); old.report = baseReport()
+        let new = FakeDevice(); new.report = baseReport()
+        let m = make(old)
+        await m.attach(device: old, model: .us1x2HR, key: "k")
+        old.armGate()
+        old.sendError = SessionError.deviceBusy
+        m.setAutoPowerSave(false)
+        while !old.gateEntered { await Task.yield() }
+        await m.attach(device: new, model: .us1x2HR, key: "k")
+        let q = new.queries.count
+        old.openGate()
+        while old.finishedSends < 1 { await Task.yield() }
+        for _ in 0..<50 { await Task.yield() }
+        #expect(m.connection == .connected)
+        #expect(m.lastError == nil)
+        #expect(m.autoPowerSave == true)
+        #expect(new.queries.count == q)
     }
 
     @Test func reattach_rereadsState() async {

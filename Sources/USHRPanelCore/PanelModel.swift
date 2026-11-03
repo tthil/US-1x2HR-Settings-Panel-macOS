@@ -57,6 +57,8 @@ public final class PanelModel {
     public private(set) var model: USHRModel?
     public private(set) var firmware: String?
     public private(set) var sampleRate: UInt32?
+    /// Last failed-send message; connection stays usable. Cleared by a later successful send, attach, detach.
+    public private(set) var lastError: String?
 
     public var directMonitorStereo = false
     /// 0 = "Input" end, 127 = "Computer" end (= 127 - fader).
@@ -100,6 +102,7 @@ public final class PanelModel {
         self.model = model
         self.key = key
         connection = .reading
+        lastError = nil
         do {
             try await readAll(device: device, model: model, token: token)
             guard token == generation else { return }
@@ -129,6 +132,7 @@ public final class PanelModel {
         loopbackInStereo = false
         loopbackOutStereo = false
         autoPowerSave = false
+        lastError = nil
         connection = .noDevice
     }
 
@@ -195,10 +199,16 @@ public final class PanelModel {
             guard let self, let device = self.device else { return }
             do {
                 try await device.send(commands)
+                if token == self.generation { self.lastError = nil }
             } catch {
                 guard token == self.generation, let model = self.model else { return }
-                self.connection = .error(String(describing: error))
-                try? await self.readAll(device: device, model: model, token: token)
+                self.lastError = String(describing: error)
+                do {
+                    try await self.readAll(device: device, model: model, token: token)
+                    if token == self.generation { self.connection = .connected }
+                } catch {
+                    if token == self.generation { self.connection = .error(String(describing: error)) }
+                }
             }
         }
     }

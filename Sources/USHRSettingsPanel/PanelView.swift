@@ -102,15 +102,16 @@ struct PanelView: View {
 
     // MARK: sections
 
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+    private func section<Content: View>(_ title: String, symbol: String,
+                                        @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.headline)
+            Label(title, systemImage: symbol).font(.headline)
             content()
         }
     }
 
     private var directMonitor: some View {
-        section("Direct Monitor") {
+        section("Direct Monitor", symbol: "headphones") {
             Picker("Direct Monitor", selection: Binding(
                 get: { model.directMonitorStereo },
                 set: { model.setDirectMonitorStereo($0) })
@@ -124,7 +125,7 @@ struct PanelView: View {
     }
 
     private var monitorBalance: some View {
-        section("Monitor Balance") {
+        section("Monitor Balance", symbol: "slider.horizontal.3") {
             Slider(value: Binding(
                 get: { model.monitorBalance },
                 set: { model.setMonitorBalance($0) }),
@@ -141,7 +142,7 @@ struct PanelView: View {
     }
 
     private var inputs: some View {
-        section("Inputs") {
+        section("Inputs", symbol: "mic") {
             let count = PanelCommands.inputCount(for: model.model ?? .us1x2HR)
             ForEach(1...count, id: \.self) { n in
                 Toggle("Audio Input \(n)", isOn: Binding(
@@ -153,7 +154,7 @@ struct PanelView: View {
     }
 
     private var lineOut: some View {
-        section("Line Out") {
+        section("Line Out", symbol: "hifispeaker") {
             Picker("Line Out", selection: Binding(
                 get: { model.lineOut },
                 set: { model.setLineOut($0) })
@@ -168,7 +169,7 @@ struct PanelView: View {
     }
 
     private var loopback: some View {
-        section("Loopback") {
+        section("Loopback", symbol: "arrow.triangle.2.circlepath") {
             Toggle("Loopback", isOn: Binding(
                 get: { model.loopbackEnabled ?? false },
                 set: { model.setLoopback($0) })
@@ -210,7 +211,7 @@ struct PanelView: View {
     }
 
     private var power: some View {
-        section("Power") {
+        section("Power", symbol: "power") {
             Toggle("Auto Power Save", isOn: Binding(
                 get: { model.autoPowerSave },
                 set: { model.setAutoPowerSave($0) })

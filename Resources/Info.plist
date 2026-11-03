@@ -6,6 +6,7 @@
     <key>CFBundleIdentifier</key><string>com.codeworx.ushr-settings-panel</string>
     <key>CFBundleName</key><string>US-HR Settings Panel</string>
     <key>CFBundleDisplayName</key><string>US-HR Settings Panel</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>

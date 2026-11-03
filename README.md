@@ -13,6 +13,10 @@ Native Apple Silicon (arm64, macOS 14+) replacement for TASCAM's US-HR Settings 
 launch it with `open "build/US-HR Settings Panel.app"`. Plug in a TASCAM US-1x2HR and the panel
 reads the device state and controls it live. `swift build` and `swift test` build and test all targets.
 
+App icon: the build script copies TASCAM's original icon from the old TASCAM app bundle if
+`US-HR_SettingsPanel.app/` is present in the repo root (it is git-ignored and never committed —
+the artwork is TASCAM's). Without it the app builds with the default icon.
+
 The app is unsandboxed (it talks to the device over raw USB control transfers) and is ad-hoc
 signed for local use. On first launch macOS may block it: right-click the app and choose Open.
 

@@ -245,4 +245,46 @@ final class SessionTests: XCTestCase {
             XCTAssertEqual(error as? SessionError, .noReply)
         }
     }
+
+    func test_waitReady_isBoundedByDeadlineNotJustAttempts() async {
+        let t = FakeTransport(inBehavior: { _ in
+            Thread.sleep(forTimeInterval: 0.03)
+            throw TransportError.timeout
+        })
+        var timing = SessionTiming.immediate
+        timing.readyTimeout = .milliseconds(100)
+        let s = USHRSession(transport: t, timing: timing)
+        let start = ContinuousClock.now
+        do {
+            try await s.waitReady()
+            XCTFail("expected deviceBusy")
+        } catch {
+            XCTAssertEqual(error as? SessionError, .deviceBusy)
+        }
+        XCTAssertLessThan(ContinuousClock.now - start, .seconds(1))
+        XCTAssertLessThan(t.inReads, 10)
+    }
+
+    func test_query_replyReadTransientErrorsAreRetried() async throws {
+        let t = FakeTransport(ins: [[0x12, 2, 0, 0, 0], [0x15, 2, 1, 0, 0]], inBehavior: { n in
+            if n == 2 { throw TransportError.timeout }
+            if n == 3 { throw TransportError.stalled }
+        })
+        let s = USHRSession(transport: t, timing: .immediate)
+        let report = try await s.query([.getAutoPowerSave])
+        XCTAssertEqual(report.autoPowerSave, true)
+    }
+
+    func test_query_replyReadOtherErrorPropagates() async {
+        let t = FakeTransport(ins: [[0x12, 2, 0, 0, 0]], inBehavior: { n in
+            if n == 2 { throw TransportError.deviceGone }
+        })
+        let s = USHRSession(transport: t, timing: .immediate)
+        do {
+            _ = try await s.query([.getAutoPowerSave])
+            XCTFail("expected deviceGone")
+        } catch {
+            XCTAssertEqual(error as? TransportError, .deviceGone)
+        }
+    }
 }

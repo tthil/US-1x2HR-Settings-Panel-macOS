@@ -105,11 +105,48 @@ public final class PanelModel {
         lastError = nil
         do {
             try await readAll(device: device, model: model, token: token)
+        } catch {
+            guard token == generation else { return }
+            // One automatic retry before surfacing the error.
+            await sleeper(.seconds(1))
+            guard token == generation else { return }
+            do {
+                try await readAll(device: device, model: model, token: token)
+            } catch {
+                guard token == generation else { return }
+                connection = .error(Self.describe(error))
+                return
+            }
+        }
+        guard token == generation else { return }
+        connection = .connected
+    }
+
+    /// Re-reads device state after an error. No-op when detached.
+    public func retry() async {
+        guard let device, let model else { return }
+        generation += 1
+        let token = generation
+        connection = .reading
+        lastError = nil
+        do {
+            try await readAll(device: device, model: model, token: token)
             guard token == generation else { return }
             connection = .connected
         } catch {
             guard token == generation else { return }
-            connection = .error(String(describing: error))
+            connection = .error(Self.describe(error))
+        }
+    }
+
+    public static func describe(_ error: Error) -> String {
+        switch error {
+        case SessionError.deviceBusy: return "The interface is busy. Try again."
+        case SessionError.noReply: return "The interface didn't answer."
+        case TransportError.deviceGone: return "The interface was disconnected."
+        case TransportError.stalled, TransportError.timeout: return "USB communication timed out."
+        case TransportError.io(let kr): return "USB error 0x" + String(UInt32(bitPattern: kr), radix: 16)
+        default: return String(describing: error)
         }
     }
 
@@ -202,12 +239,12 @@ public final class PanelModel {
                 if token == self.generation { self.lastError = nil }
             } catch {
                 guard token == self.generation, let model = self.model else { return }
-                self.lastError = String(describing: error)
+                self.lastError = Self.describe(error)
                 do {
                     try await self.readAll(device: device, model: model, token: token)
                     if token == self.generation { self.connection = .connected }
                 } catch {
-                    if token == self.generation { self.connection = .error(String(describing: error)) }
+                    if token == self.generation { self.connection = .error(Self.describe(error)) }
                 }
             }
         }

@@ -12,7 +12,9 @@ struct PanelView: View {
         VStack(alignment: .leading, spacing: 14) {
             header
             if case .error(let message) = model.connection {
-                banner("Device error: \(message)", systemImage: "exclamationmark.octagon.fill", color: .red)
+                banner("Device error: \(message)", systemImage: "exclamationmark.octagon.fill", color: .red) {
+                    Button("Retry") { Task { await model.retry() } }
+                }
             }
             if model.connection == .noDevice, let message = coordinator.deviceMessage {
                 banner(message, systemImage: "exclamationmark.triangle.fill", color: .orange)
@@ -55,6 +57,9 @@ struct PanelView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             }
+            if let kind = model.model, kind != .us1x2HR {
+                caption("This model hasn't been tested with this app.")
+            }
         }
     }
 
@@ -81,12 +86,17 @@ struct PanelView: View {
         return "\(text) kHz"
     }
 
-    private func banner(_ text: String, systemImage: String, color: Color) -> some View {
-        Label(text, systemImage: systemImage)
-            .font(.callout)
-            .foregroundStyle(color)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
+    private func banner<Trailing: View>(_ text: String, systemImage: String, color: Color,
+                                        @ViewBuilder trailing: () -> Trailing = { EmptyView() }) -> some View {
+        HStack {
+            Label(text, systemImage: systemImage)
+                .font(.callout)
+                .foregroundStyle(color)
+            Spacer(minLength: 8)
+            trailing()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
             .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
     }
 

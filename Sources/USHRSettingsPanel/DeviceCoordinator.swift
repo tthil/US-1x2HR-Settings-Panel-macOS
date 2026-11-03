@@ -12,6 +12,8 @@ final class DeviceCoordinator {
     private(set) var deviceMessage: String?
     @ObservationIgnored private var monitor: DeviceMonitor?
     @ObservationIgnored private var activeID: UInt64?
+    /// Devices attached while another was active, in attach order; promoted when the active one detaches.
+    @ObservationIgnored private var waiting: [AttachedDevice] = []
     @ObservationIgnored private var attachTask: Task<Void, Never>?
 
     init(model: PanelModel) {
@@ -44,10 +46,19 @@ final class DeviceCoordinator {
         monitor = nil
         model.detach()
         activeID = nil
+        waiting = []
     }
 
     private func handleAttach(_ device: AttachedDevice) {
-        guard monitor != nil, activeID == nil else { return } // stopped, or extra device: ignore
+        guard monitor != nil else { return }
+        guard activeID == nil else {
+            if !waiting.contains(where: { $0.registryID == device.registryID }) { waiting.append(device) }
+            return
+        }
+        activate(device)
+    }
+
+    private func activate(_ device: AttachedDevice) {
         activeID = device.registryID
         let session = USHRSession(transport: device.transport)
         let m = model
@@ -62,10 +73,12 @@ final class DeviceCoordinator {
     }
 
     private func handleDetach(_ id: UInt64) {
+        waiting.removeAll { $0.registryID == id }
         guard id == activeID else { return }
         activeID = nil
         attachTask?.cancel()
         attachTask = nil
         model.detach()
+        if !waiting.isEmpty { activate(waiting.removeFirst()) }
     }
 }

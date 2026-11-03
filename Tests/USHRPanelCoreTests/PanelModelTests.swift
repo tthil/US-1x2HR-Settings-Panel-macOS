@@ -14,6 +14,7 @@ final class FakeDevice: USHRControlling, @unchecked Sendable {
     private var _gateEntered = false
     private var _finished = 0
     private var _queryError: Error?
+    private var _queryFailures = 0
 
     var sent: [[Command]] { lock.withLock { _sent } }
     var queries: [[Command]] { lock.withLock { _queries } }
@@ -29,6 +30,11 @@ final class FakeDevice: USHRControlling, @unchecked Sendable {
     var queryError: Error? {
         get { lock.withLock { _queryError } }
         set { lock.withLock { _queryError = newValue } }
+    }
+    /// The next N queries throw `noReply`, then queries succeed.
+    var queryFailures: Int {
+        get { lock.withLock { _queryFailures } }
+        set { lock.withLock { _queryFailures = newValue } }
     }
     var gateEntered: Bool { lock.withLock { _gateEntered } }
     func armGate() { lock.withLock { _gateArmed = true } }
@@ -53,10 +59,22 @@ final class FakeDevice: USHRControlling, @unchecked Sendable {
     }
 
     func query(_ commands: [Command]) async throws -> DeviceReport {
-        lock.withLock { _queries.append(commands) }
+        let fail = lock.withLock { () -> Bool in
+            _queries.append(commands)
+            if _queryFailures > 0 { _queryFailures -= 1; return true }
+            return false
+        }
+        if fail { throw SessionError.noReply }
         if let e = queryError { throw e }
         return report
     }
+}
+
+final class Locked<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: T
+    init(_ v: T) { value = v }
+    func withLock<R>(_ f: (inout T) -> R) -> R { lock.withLock { f(&value) } }
 }
 
 func makeStore() -> LastSetStore { LastSetStore(defaults: UserDefaults(suiteName: UUID().uuidString)!) }
@@ -78,7 +96,10 @@ func baseReport() -> DeviceReport {
 @MainActor
 @Suite struct PanelModelTests {
     func make(_ device: FakeDevice, interval: Duration = .zero, store: LastSetStore? = nil) -> PanelModel {
-        PanelModel(store: store ?? makeStore(), sliderInterval: interval)
+        if interval == .zero {
+            return PanelModel(store: store ?? makeStore(), sliderInterval: interval, sleeper: { _ in })
+        }
+        return PanelModel(store: store ?? makeStore(), sliderInterval: interval)
     }
 
     @Test func attach_appliesDeviceReport() async {
@@ -247,9 +268,59 @@ func baseReport() -> DeviceReport {
             func send(_ c: [Command]) async throws {}
             func query(_ c: [Command]) async throws -> DeviceReport { throw SessionError.noReply }
         }
-        let m = PanelModel(store: makeStore(), sliderInterval: .zero)
+        let m = PanelModel(store: makeStore(), sliderInterval: .zero, sleeper: { _ in })
         await m.attach(device: Failing(), model: .us1x2HR, key: "k")
         if case .error = m.connection {} else { Issue.record("expected error") }
+    }
+
+    @Test func attachReadFailsOnce_autoRetriesAfterOneSecond() async {
+        let d = FakeDevice(); d.report = baseReport()
+        d.queryFailures = 1
+        let slept = Locked<[Duration]>([])
+        let m = PanelModel(store: makeStore(), sliderInterval: .zero, sleeper: { d in slept.withLock { $0.append(d) } })
+        await m.attach(device: d, model: .us1x2HR, key: "k")
+        #expect(m.connection == .connected)
+        #expect(slept.withLock { $0 } == [.seconds(1)])
+        #expect(m.autoPowerSave)
+    }
+
+    @Test func attachReadFailsTwice_errorWithReadableText() async {
+        let d = FakeDevice(); d.report = baseReport()
+        d.queryFailures = 2
+        let m = make(d)
+        await m.attach(device: d, model: .us1x2HR, key: "k")
+        #expect(m.connection == .error("The interface didn't answer."))
+    }
+
+    @Test func retryAfterError_succeedsAndReconnects() async {
+        let d = FakeDevice(); d.report = baseReport()
+        d.queryFailures = 2
+        let m = make(d)
+        await m.attach(device: d, model: .us1x2HR, key: "k")
+        #expect(m.model == .us1x2HR)
+        await m.retry()
+        #expect(m.connection == .connected)
+        #expect(m.autoPowerSave)
+    }
+
+    @Test func retryAfterDetach_isNoOp() async {
+        let d = FakeDevice(); d.report = baseReport()
+        let m = make(d)
+        await m.attach(device: d, model: .us1x2HR, key: "k")
+        m.detach()
+        let q = d.queries.count
+        await m.retry()
+        #expect(m.connection == .noDevice)
+        #expect(d.queries.count == q)
+    }
+
+    @Test func describe_mapsErrorsToReadableText() {
+        #expect(PanelModel.describe(SessionError.deviceBusy) == "The interface is busy. Try again.")
+        #expect(PanelModel.describe(SessionError.noReply) == "The interface didn't answer.")
+        #expect(PanelModel.describe(TransportError.deviceGone) == "The interface was disconnected.")
+        #expect(PanelModel.describe(TransportError.stalled) == "USB communication timed out.")
+        #expect(PanelModel.describe(TransportError.timeout) == "USB communication timed out.")
+        #expect(PanelModel.describe(TransportError.io(0x2c0)) == "USB error 0x2c0")
     }
 
     @Test func filter_ignoresUnrelatedStaleKeys() {

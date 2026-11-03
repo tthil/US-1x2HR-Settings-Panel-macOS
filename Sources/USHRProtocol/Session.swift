@@ -12,6 +12,8 @@ public protocol ControlTransport: Sendable {
 public struct SessionTiming: Sendable {
     public var retryDelay: Duration = .milliseconds(10)
     public var readyAttempts = 1000
+    /// Wall-clock cap for one wait-ready poll (spec §6.2); a slow `controlIn` must not stretch it.
+    public var readyTimeout: Duration = .seconds(10)
     public var sendAttempts = 3
     public var replyAttempts = 100
     public var assignReadDelay: Duration = .milliseconds(100)
@@ -22,6 +24,7 @@ public struct SessionTiming: Sendable {
         var t = SessionTiming()
         t.retryDelay = .zero
         t.assignReadDelay = .zero
+        t.readyTimeout = .seconds(10)
         return t
     }
 }
@@ -77,6 +80,7 @@ public actor USHRSession: USHRControlling {
     }
 
     private func pollReady() async throws {
+        let deadline = ContinuousClock.now.advanced(by: timing.readyTimeout)
         for attempt in 0..<timing.readyAttempts {
             try Task.checkCancellation()
             do {
@@ -88,6 +92,7 @@ public actor USHRSession: USHRControlling {
             } catch let error as TransportError where error == .stalled || error == .timeout {
                 // Not ready; keep polling.
             }
+            if ContinuousClock.now >= deadline { break }
             if attempt + 1 < timing.readyAttempts { try await pause(timing.retryDelay) }
         }
         throw SessionError.deviceBusy
@@ -152,9 +157,13 @@ public actor USHRSession: USHRControlling {
         // but do not end the wait.
         for attempt in 0..<timing.replyAttempts {
             try Task.checkCancellation()
-            let bytes = try transport.controlIn(maxLength: TLV.maxMessageLength)
-            if let records = try? TLV.decode(bytes) {
-                report.merge(DeviceReport.parse(records))
+            do {
+                let bytes = try transport.controlIn(maxLength: TLV.maxMessageLength)
+                if let records = try? TLV.decode(bytes) {
+                    report.merge(DeviceReport.parse(records))
+                }
+            } catch let error as TransportError where error == .stalled || error == .timeout {
+                // Transient; count as an empty attempt.
             }
             if commands.allSatisfy({ $0.isAnswered(by: report) }) && !report.isEmpty { return report }
             if attempt + 1 < timing.replyAttempts { try await pause(timing.retryDelay) }

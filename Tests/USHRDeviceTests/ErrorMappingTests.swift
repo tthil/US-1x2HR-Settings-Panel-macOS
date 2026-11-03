@@ -24,3 +24,12 @@ final class ErrorMappingTests: XCTestCase {
         XCTAssertEqual(transportError(forKernelReturn: kr), .io(kr))
     }
 }
+
+final class PersistenceKeyTests: XCTestCase {
+    func testKey() {
+        XCTAssertEqual(AttachedDevice.persistenceKey(serial: "ABC123", productID: 0x806F), "ABC123")
+        for bad in [nil, "", "  ", "no serial number", "No Serial Number "] as [String?] {
+            XCTAssertEqual(AttachedDevice.persistenceKey(serial: bad, productID: 0x806F), "pid-32879")
+        }
+    }
+}

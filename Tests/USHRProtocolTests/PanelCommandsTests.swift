@@ -70,7 +70,8 @@ final class PanelCommandsTests: XCTestCase {
     func test_readAll_batches() {
         XCTAssertEqual(PanelCommands.readAll(for: .us1x2HR), [
             [.getInfo],
-            [.getSampleRate, .getAutoPowerSave],
+            [.getSampleRate],
+            [.getAutoPowerSave],
             [.getStereo(Channel(.directMonitorOut, 1))],
             [.getStereo(Channel(.analogIn, 1))],
             [.getStereo(Channel(.computerOut, 1))],
@@ -79,9 +80,11 @@ final class PanelCommandsTests: XCTestCase {
             [.getFader(Channel(.directMonitorOut, 1))],
             [.getAssign],
         ])
-        XCTAssertEqual(PanelCommands.readAll(for: .us4x4HR).count, 11)
-        // Hardware answers only the last get of a multi-get message, so each get is its own query.
-        XCTAssertTrue(PanelCommands.readAll(for: .us4x4HR).dropFirst(2).dropLast().allSatisfy { $0.count == 1 })
+        XCTAssertEqual(PanelCommands.readAll(for: .us4x4HR).count, 12)
+        // Hardware answers only the last get of a message, so every group has exactly one get.
+        for model in [USHRModel.us1x2HR, .us4x4HR] {
+            XCTAssertTrue(PanelCommands.readAll(for: model).allSatisfy { $0.count == 1 })
+        }
     }
 
     func test_lineOutSource_labels() {

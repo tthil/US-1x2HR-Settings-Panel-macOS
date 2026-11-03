@@ -67,7 +67,8 @@ public enum PanelCommands {
     public static func readAll(for model: USHRModel) -> [[Command]] {
         var groups: [[Command]] = [
             [.getInfo],
-            [.getSampleRate, .getAutoPowerSave],
+            [.getSampleRate],
+            [.getAutoPowerSave],
             [.getStereo(Channel(.directMonitorOut, 1))],
             [.getStereo(Channel(.analogIn, 1))],
             [.getStereo(Channel(.computerOut, 1))],

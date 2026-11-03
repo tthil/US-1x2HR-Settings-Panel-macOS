@@ -67,4 +67,20 @@ public enum Command: Equatable, Sendable {
             return zero + [TLVRecord(0x41, .flag)] + zero + [TLVRecord(0x42, .flag), TLVRecord(0x43, .flag)]
         }
     }
+
+    /// Whether `report` contains the answer to this command. Non-get commands need no answer.
+    /// Note: a stale reply for the *same* key (e.g. an earlier reply for the same channel) cannot be
+    /// distinguished from a fresh one; this only rejects replies for other keys.
+    public func isAnswered(by report: DeviceReport) -> Bool {
+        switch self {
+        case .setFader, .setMute, .setStereo, .setAutoPowerSave, .assign: return true
+        case .getFader(let ch): return report.faders[ch] != nil
+        case .getMute(let ch): return report.mutes[ch] != nil
+        case .getStereo(let ch): return report.stereo[ch] != nil
+        case .getAutoPowerSave: return report.autoPowerSave != nil
+        case .getSampleRate: return report.sampleRate != nil
+        case .getInfo: return report.version != nil
+        case .getAssign: return !report.assignments.isEmpty
+        }
+    }
 }

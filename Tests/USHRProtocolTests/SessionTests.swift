@@ -96,19 +96,19 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(t.outAttempts, 3)
     }
 
-    func test_send_splitsLongBatchAcrossMessages() async throws {
+    func test_send_writesOneCommandPerMessage() async throws {
         let t = FakeTransport()
         let s = USHRSession(transport: t, timing: .immediate)
         let commands = (0..<8).map { Command.setFader(Channel(.computerOut, UInt8($0)), 10) }
         try await s.send(commands)
-        XCTAssertEqual(t.outs.count, 2)
+        XCTAssertEqual(t.outs.count, 8)
         for out in t.outs {
             XCTAssertLessThanOrEqual(out.count, 64)
             XCTAssertEqual(Array(out.suffix(2)), [0, 0])
             // Every message decodes to whole commands (3 records each).
-            XCTAssertEqual(try TLV.decode(out).count % 3, 0)
+            XCTAssertEqual(try TLV.decode(out).count, 3)
         }
-        XCTAssertEqual(t.events, [.in, .out, .in, .out])
+        XCTAssertEqual(t.events, Array(repeating: [FakeTransport.Event.in, .out], count: 8).flatMap { $0 })
         let all = try t.outs.flatMap { try TLV.decode($0) }
         XCTAssertEqual(all, commands.flatMap(\.records))
     }
@@ -192,7 +192,7 @@ final class SessionTests: XCTestCase {
     }
 
     func test_query_getAssign_waitsAssignReadDelay() async throws {
-        let t = FakeTransport(ins: [[0x12, 2, 0, 0, 0], [0x15, 2, 1, 0, 0]])
+        let t = FakeTransport(ins: [[0x12, 2, 0, 0, 0], [0x61, 2, 5, 0x62, 2, 1, 0x41, 1, 0x61, 2, 1, 0x62, 2, 1, 0x42, 1, 0x43, 1, 0, 0]])
         var timing = SessionTiming.immediate
         timing.assignReadDelay = .milliseconds(60)
         let s = USHRSession(transport: t, timing: timing)
@@ -208,7 +208,7 @@ final class SessionTests: XCTestCase {
     }
 
     func test_concurrentSendDuringQueryDelay_doesNotStealReplyOrInterleave() async throws {
-        let t = FakeTransport(ins: [[0x12, 2, 0, 0, 0], [0x15, 2, 1, 0, 0]])
+        let t = FakeTransport(ins: [[0x12, 2, 0, 0, 0], [0x61, 2, 5, 0x62, 2, 1, 0x41, 1, 0x61, 2, 1, 0x62, 2, 1, 0x42, 1, 0x43, 1, 0, 0]])
         var timing = SessionTiming.immediate
         timing.assignReadDelay = .milliseconds(50)
         let s = USHRSession(transport: t, timing: timing)
@@ -217,9 +217,32 @@ final class SessionTests: XCTestCase {
         let sender = Task { try await s.send([.setAutoPowerSave(false)]) }
         let report = try await q.value
         try await sender.value
-        XCTAssertEqual(report.autoPowerSave, true)
+        XCTAssertEqual(report.assignments[Channel(.lineOut, 1)], Channel(.directMonitorOut, 1))
         // query: ready, write, reply; then send: ready, write
         XCTAssertEqual(t.events, [.in, .out, .in, .in, .out])
         XCTAssertEqual(t.outs.last, [0x15, 2, 0, 0, 0])
+    }
+
+    func test_query_staleReplyForOtherChannelIsSkipped() async throws {
+        let stale: [UInt8] = [0x61, 2, 5, 0x62, 2, 1, 0xC6, 2, 4, 0, 0]       // (5,1) stereo
+        let right: [UInt8] = [0x61, 2, 4, 0x62, 2, 1, 0xC6, 2, 1, 0, 0]       // (4,1) mono
+        let t = FakeTransport(ins: [[0x12, 2, 0, 0, 0], stale, right])
+        let s = USHRSession(transport: t, timing: .immediate)
+        let report = try await s.query([.getStereo(Channel(.analogIn, 1))])
+        XCTAssertEqual(report.stereo[Channel(.analogIn, 1)], .mono)
+    }
+
+    func test_query_neverAnswered_throwsNoReply() async {
+        let stale: [UInt8] = [0x61, 2, 5, 0x62, 2, 1, 0xC6, 2, 4, 0, 0]
+        let t = FakeTransport(ins: [[0x12, 2, 0, 0, 0]] + Array(repeating: stale, count: 10))
+        var timing = SessionTiming.immediate
+        timing.replyAttempts = 5
+        let s = USHRSession(transport: t, timing: timing)
+        do {
+            _ = try await s.query([.getStereo(Channel(.analogIn, 1))])
+            XCTFail("expected noReply")
+        } catch {
+            XCTAssertEqual(error as? SessionError, .noReply)
+        }
     }
 }

@@ -9,7 +9,7 @@ Vendor control transfers (OUT 0x40/0x1D, IN 0xC0/0x1E) succeed through `IOUSBHos
 | Item (spec) | Status | Observed raw hex | Notes |
 |---|---|---|---|
 | DeviceRequest without USBDeviceOpen (§10) | confirmed | n/a | All OUT/IN transfers returned success. |
-| PID to model (§6.1) | confirmed | n/a | PID 0x806F, USB product name `US-1x2HR`, no serial number string (`persistenceKey` falls back to `pid-32879`). |
+| PID to model (§6.1) | confirmed | n/a | PID 0x806F, USB product name `US-1x2HR`, no serial number string (USB string is the literal `no serial number`; `persistenceKey` treats it as absent and uses `pid-32879`). |
 | Info block framing `31 01` (§6.5) | confirmed | OUT `31 01 00 00`; IN `A1 03 01 00 32 03 64 00 33 03 0E 00 34 05 08 "US-1x2HR\0" 37 05 08 "US-1x2HR\0" 35 05 0B "Sep  2 2020\0" 36 05 08 "17:42:40\0" 00 00` | version 0x0064, build 14. Tag order in reply: 32, 33, 34, 37, 35, 36. Strings are NUL-terminated within the length. |
 | Sample-rate read `18 01` (§6.5) | confirmed | OUT `18 01 00 00`; IN `A1 03 01 00 18 04 80 BB 00 00 00 00` | reply tag 0x18, u32 LE 0xBB80 = 48000 Hz. |
 | Auto power save get `14 01` | confirmed | OUT `14 01 00 00`; IN `A1 03 01 00 15 02 00` | reply tag 0x15 (not 0x14), u8 0 = off. |
@@ -19,7 +19,7 @@ Vendor control transfers (OUT 0x40/0x1D, IN 0xC0/0x1E) succeed through `IOUSBHos
 | Direct Monitor stereo (5,1) | observed | `61 02 05 62 02 01 C6 02 04` | STEREO (4). |
 | Loopback Input stereo (4,1) | observed | `61 02 04 62 02 01 C6 02 04` | STEREO (4). |
 | Loopback Output stereo (3,1) | observed | `61 02 03 62 02 01 C6 02 04` | STEREO (4). |
-| Multi-get in one message | corrected | 3 stereo gets in one OUT (29 bytes) `61 02 05 62 02 01 C6 02 00 61 02 04 ... 00 00` returned only `61 02 03 62 02 01 C6 02 04` | Device answers only the **last** get of a message. `PanelCommands.readAll` now issues one channel get per query (original sends each get separately). |
+| Multi-get in one message | corrected | 3 stereo gets in one OUT (29 bytes) `61 02 05 62 02 01 C6 02 00 61 02 04 ... 00 00` returned only `61 02 03 62 02 01 C6 02 04` | Device answers only the **last** get of a message. `PanelCommands.readAll` now issues one get per query, including sample rate and auto power save (original sends each get separately). |
 | Mute indices reported (ch 4) | observed | one get (idx 1 or idx 2) returns `61 02 04 62 02 01 C3 02 00 ... 62 02 04 C3 02 00` | A single mute get returns **all four** ANALOG_IN idx 1-4, all 0 (unmuted/false), even on the 1x2HR. Same reply for get idx 1 and idx 2. |
 | Fader (5,1) | observed | `61 02 05 62 02 01 C1 02 00` | value 0. |
 | Loopback ch 6 is write-only (global context) | corrected (readable) | fader get (5,1) reply also contains `61 02 06 62 02 00 C1 02 00 61 02 06 62 02 01 C1 02 7F` | Device appends ch6 idx0 = 0 (loopback off) and ch6 idx1 = 0x7F (127, loopback volume). Loopback state is therefore readable through the (5,1) fader get; parser already exposes them in `faders`. Whether these track writes is pending Step 6. |
@@ -28,7 +28,8 @@ Vendor control transfers (OUT 0x40/0x1D, IN 0xC0/0x1E) succeed through `IOUSBHos
 | Audio Input toggle meaning/polarity | pending owner check (Step 6) | all four mutes read 0 | No input is currently muted by any definition, i.e. default 0. |
 | Loopback ch 6 idx 0/1 behaviour | pending owner check (Step 6) | see ch 6 row | |
 | Slider ranges (§10) | partly observed | loopback vol 0x7F | 127 seen as the loopback volume; ranges otherwise unchanged. |
-| Stale IN buffer | note | `raw-read` after a query returns the previous reply | The device keeps the last reply in the IN buffer; bytes after the `00 00` terminator are leftovers of earlier replies and must be ignored (decoder stops at the terminator). A query whose reply has not yet been refreshed could read the previous reply. |
+| Multiple set records in one message | not used | n/a | One Command per OUT message by design (as the original app); nothing pending. |
+| Stale IN buffer | note | `raw-read` after a query returns the previous reply | The device keeps the last reply in the IN buffer; bytes after the `00 00` terminator are leftovers of earlier replies and must be ignored (decoder stops at the terminator). `USHRSession.query` keeps reading until each get's key is present (`Command.isAnswered`); a stale reply for the *same* key cannot be distinguished. |
 
 ## Corrections made in code
 

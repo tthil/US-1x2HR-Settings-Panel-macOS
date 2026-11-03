@@ -44,6 +44,19 @@ final class Box: @unchecked Sendable {
     func add(_ d: AttachedDevice) { lock.lock(); devices.append(d); lock.unlock() }
 }
 
+/// Access/privilege failures mean we must not try anything else against the device.
+func blockIfAccessError(_ e: Error) {
+    if case TransportError.io(let kr) = e {
+        let u = UInt32(bitPattern: kr)
+        if u == 0xE000_02C5 || u == 0xE000_02C1 {
+            err("BLOCKED: access denied by the system, kern_return 0x" + String(u, radix: 16, uppercase: true)
+                + (u == 0xE000_02C5 ? " (kIOReturnExclusiveAccess)" : " (kIOReturnNotPrivileged)")
+                + ". Stopping all hardware attempts; ask the owner.")
+            exit(3)
+        }
+    }
+}
+
 func describe(_ e: Error) -> String {
     switch e {
     case SessionError.deviceBusy: return "device busy (never reported ready)"
@@ -86,8 +99,9 @@ func readAll(_ dev: AttachedDevice, session: USHRSession) async -> Bool {
             let r = try await session.query(group)
             printReport(r)
         } catch {
+            blockIfAccessError(error)
             ok = false
-            print("  FAILED: \(describe(error))")
+            err("  FAILED: \(describe(error))")
         }
     }
     return ok
@@ -159,8 +173,14 @@ guard let device = devices.first else {
     exit(2)
 }
 
-nonisolated(unsafe) var exitCode: Int32 = 0
-nonisolated(unsafe) var finished = false
+final class ExitState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _code: Int32 = 0
+    private var _finished = false
+    var code: Int32 { get { lock.withLock { _code } } set { lock.withLock { _code = newValue } } }
+    var finished: Bool { get { lock.withLock { _finished } } set { lock.withLock { _finished = newValue } } }
+}
+let state = ExitState()
 
 let work = Task {
     let quiet = !(verbose || sub == "read-all" || sub == "info")
@@ -174,28 +194,29 @@ let work = Task {
         for group in [[Command.getInfo], [.getSampleRate], [.getAutoPowerSave]] {
             print("query: \(group)")
             do { printReport(try await session.query(group)) } catch {
-                print("  FAILED: \(describe(error))"); exitCode = 1
+                blockIfAccessError(error)
+                err("  FAILED: \(describe(error))"); state.code = 1
             }
         }
     case "read-all":
-        if !(await readAll(device, session: session)) { exitCode = 1 }
+        if !(await readAll(device, session: session)) { state.code = 1 }
     case "raw-read":
         do {
             let b = try device.transport.controlIn(maxLength: 64)
             print("IN [\(b.count)] \(hex(b))")
-        } catch { print("FAILED: \(describe(error))"); exitCode = 1 }
+        } catch { blockIfAccessError(error); err("FAILED: \(describe(error))"); state.code = 1 }
     case "set":
         do {
             try await session.send(setCommands)
             print("sent: \(setCommands)")
-        } catch { print("FAILED: \(describe(error))"); exitCode = 1 }
+        } catch { blockIfAccessError(error); err("FAILED: \(describe(error))"); state.code = 1 }
         print("-- read-all after set --")
-        if !(await readAll(device, session: session)) { exitCode = 1 }
+        if !(await readAll(device, session: session)) { state.code = 1 }
     default: break
     }
-    finished = true
+    state.finished = true
 }
 _ = work
-while !finished { CFRunLoopRunInMode(.defaultMode, 0.05, false) }
+while !state.finished { CFRunLoopRunInMode(.defaultMode, 0.05, false) }
 monitor.stop()
-exit(exitCode)
+exit(state.code)

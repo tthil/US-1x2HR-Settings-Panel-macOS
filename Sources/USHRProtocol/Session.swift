@@ -98,11 +98,11 @@ public actor USHRSession: USHRControlling {
     }
 
     /// Greedily packs whole record groups into messages of at most 64 bytes.
-    static func pack(_ groups: [[TLVRecord]]) throws -> [[UInt8]] {
+    static func pack(_ groups: [[TLVRecord]], onePerMessage: Bool = false) throws -> [[UInt8]] {
         var current: [TLVRecord] = []
         var messages: [[UInt8]] = []
         for records in groups {
-            if !current.isEmpty, encodedLength(current + records) > TLV.maxMessageLength {
+            if !current.isEmpty, onePerMessage || encodedLength(current + records) > TLV.maxMessageLength {
                 messages.append(try TLV.encode(current))
                 current = []
             }
@@ -119,7 +119,8 @@ public actor USHRSession: USHRControlling {
     }
 
     private func sendLocked(_ commands: [Command]) async throws {
-        let messages = try Self.pack(commands.map(\.records))
+        // One command per OUT message: the original app does the same, and it avoids half-applied sets.
+        let messages = try Self.pack(commands.map(\.records), onePerMessage: true)
         for message in messages {
             try await pollReady()
             try await write(message)
@@ -147,13 +148,16 @@ public actor USHRSession: USHRControlling {
         if commands.contains(.getAssign) { try await pause(timing.assignReadDelay) }
 
         var report = DeviceReport()
-        for _ in 0..<timing.replyAttempts {
+        // Keep reading until every get is answered; replies for other keys (stale buffer) are merged
+        // but do not end the wait.
+        for attempt in 0..<timing.replyAttempts {
             try Task.checkCancellation()
             let bytes = try transport.controlIn(maxLength: TLV.maxMessageLength)
             if let records = try? TLV.decode(bytes) {
                 report.merge(DeviceReport.parse(records))
             }
-            if !report.isEmpty { return report }
+            if commands.allSatisfy({ $0.isAnswered(by: report) }) && !report.isEmpty { return report }
+            if attempt + 1 < timing.replyAttempts { try await pause(timing.retryDelay) }
         }
         throw SessionError.noReply
     }

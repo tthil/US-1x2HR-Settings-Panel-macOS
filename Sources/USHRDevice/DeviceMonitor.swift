@@ -10,7 +10,16 @@ public struct AttachedDevice: Sendable {
     public let transport: IOKitTransport
 
     public var model: USHRModel { USHRModel(productID: productID, productName: productName) }
-    public var persistenceKey: String { serialNumber ?? "pid-\(productID)" }
+    public var persistenceKey: String { Self.persistenceKey(serial: serialNumber, productID: productID) }
+
+    /// Some units report the literal "no serial number"; that and blank strings are not usable keys.
+    static func persistenceKey(serial: String?, productID: UInt16) -> String {
+        if let s = serial?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty,
+           s.lowercased() != "no serial number" {
+            return s
+        }
+        return "pid-\(productID)"
+    }
 }
 
 /// Watches for US-HR devices on the main run loop. Callbacks arrive on the main thread.
